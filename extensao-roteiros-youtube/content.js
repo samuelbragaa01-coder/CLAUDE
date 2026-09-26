@@ -54,22 +54,66 @@
 
   const text = (t) => t?.simpleText ?? t?.runs?.map((r) => r.text).join('') ?? t?.content ?? '';
 
-  function clientContext(html) {
-    const ver = (html || document.documentElement.innerHTML).match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1] || '2.20250101.00.00';
-    const hl = document.documentElement.lang || 'pt';
-    return { client: { clientName: 'WEB', clientVersion: ver, hl } };
+  // Config completa do cliente (ytcfg) extraída do HTML da página
+  function ytcfg(html) {
+    const src = html || document.documentElement.innerHTML;
+    const ctx = extractJson(src, '"INNERTUBE_CONTEXT":');
+    const ver = src.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1] || '2.20250101.00.00';
+    const key = src.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
+    const visitor = src.match(/"VISITOR_DATA":"([^"]+)"/)?.[1] || ctx?.client?.visitorData;
+    return {
+      ver, key, visitor,
+      context: ctx || { client: { clientName: 'WEB', clientVersion: ver, hl: document.documentElement.lang || 'pt' } },
+    };
   }
 
   async function innertube(endpoint, body, html) {
-    const r = await fetch(`/youtubei/v1/${endpoint}?prettyPrint=false`, {
+    const cfg = ytcfg(html);
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Youtube-Client-Name': '1',
+      'X-Youtube-Client-Version': cfg.ver,
+    };
+    if (cfg.visitor) headers['X-Goog-Visitor-Id'] = cfg.visitor;
+    const r = await fetch(`/youtubei/v1/${endpoint}?prettyPrint=false${cfg.key ? '&key=' + cfg.key : ''}`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context: clientContext(html), ...body }),
+      headers,
+      body: JSON.stringify({ context: cfg.context, ...body }),
     });
     if (!r.ok) throw new Error(`${endpoint} HTTP ${r.status}`);
     return r.json();
   }
+
+  // Lê um arquivo de legenda (json3 ou XML) e devolve segmentos
+  async function fetchCaptionTrack(baseUrl, credentials = 'include') {
+    const url = baseUrl.replace(/&fmt=[^&]*/, '');
+    for (const fmt of ['&fmt=json3', '']) {
+      const r = await fetch(url + fmt, { credentials });
+      const body = await r.text();
+      if (!r.ok || !body.trim()) continue;
+      if (body.trim().startsWith('{')) {
+        const j = JSON.parse(body);
+        const segs = (j.events || []).filter((e) => e.segs)
+          .map((e) => ({ ms: e.tStartMs || 0, text: e.segs.map((x) => x.utf8).join('') }));
+        if (segs.length) return segs;
+      } else {
+        const doc = new DOMParser().parseFromString(body, 'text/xml');
+        const nodes = [...doc.querySelectorAll('text, p')];
+        const segs = nodes.map((n) => ({
+          ms: n.hasAttribute('start') ? parseFloat(n.getAttribute('start')) * 1000 : +n.getAttribute('t') || 0,
+          text: (n.textContent || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+        }));
+        if (segs.length) return segs;
+      }
+    }
+    throw new Error('legenda vazia (YouTube bloqueou o download)');
+  }
+
+  const pickTrack = (tracks) => {
+    const hl = (document.documentElement.lang || '').slice(0, 2);
+    return tracks.find((t) => t.kind !== 'asr') || tracks.find((t) => t.languageCode?.startsWith(hl)) || tracks[0];
+  };
 
   const fmtTime = (ms) => {
     const s = Math.floor(ms / 1000);
@@ -94,32 +138,48 @@
     };
 
     let segments = null;
+    const errors = [];
 
-    // 1) Painel de transcrição (mesmo que o botão "Mostrar transcrição")
+    // 1) Painel "Mostrar transcrição" (get_transcript) com o contexto completo da página
     try {
       const params = findAll(initial, 'getTranscriptEndpoint')[0]?.params;
-      if (params) {
-        const data = await innertube('get_transcript', { params }, html);
-        const segs = findAll(data, 'transcriptSegmentRenderer');
-        if (segs.length) segments = segs.map((s) => ({ ms: +s.startMs || 0, text: text(s.snippet) }));
-      }
-    } catch (e) { console.warn('[Roteiros] get_transcript falhou', e); }
+      if (!params) throw new Error('vídeo sem botão de transcrição');
+      const data = await innertube('get_transcript', { params }, html);
+      const segs = findAll(data, 'transcriptSegmentRenderer');
+      if (!segs.length) throw new Error('resposta vazia');
+      segments = segs.map((s) => ({ ms: +s.startMs || 0, text: text(s.snippet) }));
+    } catch (e) { errors.push('painel: ' + e.message); }
 
-    // 2) Faixa de legendas (timedtext)
+    // 2) Legendas via cliente Android (não exige token do player web)
     if (!segments) {
-      const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
-      const track = tracks.find((t) => t.kind !== 'asr') || tracks[0];
-      if (track) {
-        try {
-          const j = await (await fetch(track.baseUrl + '&fmt=json3')).json();
-          segments = (j.events || [])
-            .filter((e) => e.segs)
-            .map((e) => ({ ms: e.tStartMs || 0, text: e.segs.map((s) => s.utf8).join('') }));
-        } catch (e) { console.warn('[Roteiros] timedtext falhou', e); }
-      }
+      try {
+        const r = await fetch('/youtubei/v1/player?prettyPrint=false', {
+          method: 'POST',
+          credentials: 'omit',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context: { client: { clientName: 'ANDROID', clientVersion: '20.10.38', androidSdkVersion: 30, hl: 'pt' } },
+            videoId,
+          }),
+        });
+        const pj = await r.json();
+        const tracks = pj?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+        if (!tracks.length) throw new Error('sem faixas de legenda');
+        segments = await fetchCaptionTrack(pickTrack(tracks).baseUrl, 'omit');
+      } catch (e) { errors.push('android: ' + e.message); }
     }
 
-    if (!segments || !segments.length) throw new Error('sem transcrição disponível');
+    // 3) Legendas do player web
+    if (!segments) {
+      try {
+        const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+        if (!tracks.length) throw new Error('sem faixas de legenda');
+        segments = await fetchCaptionTrack(pickTrack(tracks).baseUrl);
+      } catch (e) { errors.push('web: ' + e.message); }
+    }
+
+    if (!segments) console.warn('[Roteiros]', videoId, errors);
+    if (!segments || !segments.length) throw new Error(errors.join(' | ') || 'sem transcrição');
     segments = segments.map((s) => ({ ...s, text: s.text.replace(/\s+/g, ' ').trim() })).filter((s) => s.text);
     return { meta, segments };
   }
