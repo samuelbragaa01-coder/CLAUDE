@@ -261,7 +261,7 @@
     panel = document.createElement('div');
     panel.id = 'yra-panel';
     panel.innerHTML = `
-      <b>🎬 Roteiros</b> <span id="yra-count"></span>
+      <b>🎬 Roteiros v${chrome.runtime.getManifest().version}</b> <span id="yra-count"></span>
       <div class="yra-row" id="yra-sel-row">
         <button class="yra-go" id="yra-save">Baixar selecionados</button>
         <button id="yra-clear">Limpar</button>
