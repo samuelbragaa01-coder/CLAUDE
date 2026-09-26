@@ -178,6 +178,14 @@
       } catch (e) { errors.push('web: ' + e.message); }
     }
 
+    // 4) Abre o vídeo numa aba em segundo plano e lê o painel "Mostrar transcrição"
+    if (!segments) {
+      log('  tentando pela aba do vídeo…');
+      const r = await chrome.runtime.sendMessage({ type: 'transcriptViaTab', videoId });
+      if (r?.ok) segments = r.segments;
+      else errors.push('aba: ' + (r?.error || 'falhou'));
+    }
+
     if (!segments) console.warn('[Roteiros]', videoId, errors);
     if (!segments || !segments.length) throw new Error(errors.join(' | ') || 'sem transcrição');
     segments = segments.map((s) => ({ ...s, text: s.text.replace(/\s+/g, ' ').trim() })).filter((s) => s.text);
