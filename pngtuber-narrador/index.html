@@ -15,7 +15,12 @@
   label { display:block; margin:6px 0; }
   .file { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px; border:1px dashed var(--line); border-radius:8px; margin-bottom:6px; }
   .file small { color:var(--muted); display:block; }
-  .file input { width:110px; font-size:11px; }
+  .file > div:first-child { flex:none; }
+  .pick { display:flex; align-items:center; gap:6px; min-width:0; }
+  .pick .fname { font-size:12px; color:var(--muted); max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pick .fname.ok { color:var(--text); }
+  .pick button { width:auto; padding:4px 8px; font-size:12px; }
+  .pick .del { background:#3a2230; border-color:#5a2a3a; color:#ff8a8a; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; }
   input[type=range] { width:100%; }
   select, button { width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:#2a2a36; color:var(--text); font:inherit; }
@@ -138,12 +143,36 @@ let audioEl = null, audioBuf = null, levels = null, playing = false, exporting =
 function status(t){ $('#status').textContent = t; }
 const anim = k => document.querySelector(`[data-anim="${k}"]`).checked;
 
+// --- seletor de arquivo: mostra o nome e permite excluir ---
+document.querySelectorAll('.file input[type=file]').forEach(inp => {
+  inp.hidden = true;
+  const box = document.createElement('div'); box.className = 'pick';
+  box.innerHTML = '<span class="fname">nenhum</span><button type="button">Escolher</button><button type="button" class="del" title="Excluir" hidden>✕</button>';
+  inp.after(box);
+  const [name, choose, del] = box.children;
+  choose.onclick = () => inp.click();
+  inp.addEventListener('change', () => {
+    const f = inp.files[0]; if (!f) return;
+    name.textContent = f.name; name.title = f.name; name.classList.add('ok'); del.hidden = false;
+  });
+  del.onclick = () => {
+    inp.value = ''; name.textContent = 'nenhum'; name.title = ''; name.classList.remove('ok'); del.hidden = true;
+    inp.dispatchEvent(new Event('clear'));
+  };
+});
+
 // --- carregamento ---
 document.querySelectorAll('[data-img]').forEach(inp => inp.onchange = () => {
   const f = inp.files[0]; if (!f) return;
   const im = new Image();
   im.onload = () => { imgs[inp.dataset.img] = im; preview(); status('Imagem carregada.'); };
   im.src = URL.createObjectURL(f);
+});
+document.querySelectorAll('[data-img]').forEach(inp => inp.addEventListener('clear', () => {
+  delete imgs[inp.dataset.img]; stop(); preview(); status('Imagem removida.');
+}));
+$('#audioFile').addEventListener('clear', () => {
+  stop(); audioEl = audioBuf = levels = null; status('Áudio removido.');
 });
 
 $('#audioFile').onchange = async e => {
