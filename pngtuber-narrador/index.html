@@ -233,6 +233,7 @@ $('#play').onclick = play;
 $('#stop').onclick = () => { stop(); status('Parado.'); };
 $('#record').onclick = async () => {
   if (!imgs.idle || !audioEl) return status('Carregue imagem e áudio primeiro.');
+  if (recorder) return status('Já existe uma exportação em andamento. Aguarde ou clique em Parar.');
   setupAudio();
   const stream = new MediaStream([...canvas.captureStream(60).getVideoTracks(), ...recDest.stream.getAudioTracks()]);
   const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
