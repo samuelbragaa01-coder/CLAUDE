@@ -1,0 +1,14 @@
+.yra-selecting ytd-rich-item-renderer, .yra-selecting ytd-video-renderer, .yra-selecting ytd-grid-video-renderer,
+.yra-selecting ytd-compact-video-renderer, .yra-selecting ytd-reel-item-renderer, .yra-selecting yt-lockup-view-model,
+.yra-selecting ytm-shorts-lockup-view-model { cursor: copy !important; position: relative; }
+.yra-picked { outline: 4px solid #ff0033 !important; outline-offset: 2px; border-radius: 12px; }
+.yra-badge { position: absolute; top: 8px; left: 8px; z-index: 50; background: #ff0033; color: #fff; font: 700 14px system-ui;
+  min-width: 26px; height: 26px; border-radius: 13px; display: flex; align-items: center; justify-content: center; padding: 0 6px; pointer-events: none; }
+#yra-panel { position: fixed; right: 20px; bottom: 20px; z-index: 999999; background: #0f0f0f; color: #f1f1f1; border: 1px solid #ff0033;
+  border-radius: 10px; padding: 12px 14px; font: 13px system-ui, sans-serif; width: 260px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+#yra-panel b { font-size: 14px; }
+#yra-panel .yra-row { display: flex; gap: 6px; margin-top: 8px; }
+#yra-panel button { flex: 1; padding: 7px; border: 0; border-radius: 6px; cursor: pointer; font-weight: 600; background: #272727; color: #fff; }
+#yra-panel button.yra-go { background: #ff0033; }
+#yra-panel button:disabled { opacity: .5; cursor: default; }
+#yra-log { margin-top: 8px; color: #aaa; max-height: 120px; overflow: auto; white-space: pre-wrap; font-size: 12px; }

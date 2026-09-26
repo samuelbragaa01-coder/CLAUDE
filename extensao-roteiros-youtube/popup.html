@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 13px system-ui, sans-serif; width: 290px; margin: 0; padding: 14px; background: #0f0f0f; color: #f1f1f1; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  h2 { font-size: 12px; text-transform: uppercase; color: #aaa; margin: 14px 0 6px; }
+  label { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+  input[type=number] { width: 70px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 4px; }
+  button { width: 100%; padding: 9px; margin-top: 6px; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer; }
+  .primary { background: #ff0033; color: #fff; }
+  .secondary { background: #272727; color: #fff; }
+  #status { margin-top: 10px; color: #aaa; min-height: 16px; white-space: pre-wrap; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+  <h1>🎬 Roteiros do YouTube</h1>
+
+  <h2>Formato</h2>
+  <label><input type="radio" name="fmt" value="separate" checked> Um .md por vídeo</label>
+  <label><input type="radio" name="fmt" value="single"> Tudo em um único .md</label>
+  <label><input type="checkbox" id="timestamps"> Incluir minutagem</label>
+
+  <h2>Canal inteiro</h2>
+  <label>Quantidade: <input type="number" id="limit" min="0" value="0"> <small>(0 = todos)</small></label>
+  <button class="primary" id="absorb">Absorver</button>
+  <small>Abra a página do canal no YouTube antes.</small>
+
+  <h2>Escolher vídeos</h2>
+  <button class="secondary" id="start">Iniciar seleção</button>
+  <small>Depois clique nas thumbs que quiser e use o painel na página.</small>
+
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

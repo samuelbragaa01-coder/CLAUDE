@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Absorvedor de Roteiros do YouTube",
+  "version": "1.0.0",
+  "description": "Extrai as transcrições (roteiros) de vídeos do YouTube e salva em Markdown.",
+  "permissions": ["downloads", "activeTab", "storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Roteiros do YouTube" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
