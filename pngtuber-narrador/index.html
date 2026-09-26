@@ -80,7 +80,8 @@
       <option value="#00ff00">Verde (chroma key)</option>
       <option value="#0000ff">Azul (chroma key)</option>
       <option value="#ff00ff">Magenta (chroma key)</option>
-      <option value="transparent">Transparente (WebM)</option>
+      <option value="#ffffff">Branco</option>
+      <option value="#000000">Preto</option>
     </select>
   </label>
   <label>Resolução
@@ -89,6 +90,15 @@
       <option value="1920x1080">1920 × 1080 (horizontal)</option>
       <option value="1080x1920">1080 × 1920 (vertical)</option>
       <option value="720x720">720 × 720</option>
+    </select>
+  </label>
+  <label>FPS
+    <select id="fps"><option>30</option><option>60</option><option>24</option></select>
+  </label>
+  <label>Posição
+    <select id="anchor">
+      <option value="bottom">Encostado embaixo (busto)</option>
+      <option value="center">Centralizado</option>
     </select>
   </label>
   <label>Tamanho do personagem <input type="range" id="scale" min="0.3" max="1.2" step="0.01" value="0.85"></label>
@@ -100,15 +110,17 @@
   <div class="row" style="width:min(640px,100%)">
     <button id="play">▶ Pré-visualizar</button>
     <button id="stop">■ Parar</button>
-    <button id="record" class="primary">⏺ Exportar vídeo</button>
+    <button id="record" class="primary">⚡ Exportar MP4</button>
   </div>
   <div id="status">Carregue um PNG e um áudio para começar.</div>
 </main>
 
+
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.js"></script>
 <script>
-// Perfis por idioma: quanto tempo a boca "segura" aberta e quão rápido reage.
-// Idiomas silábicos rápidos (ja, es, it, ko) pedem reação mais ágil; alemão/holandês
-// têm consoantes longas, então seguramos um pouco mais para não "piscar" a boca.
+// Perfis por idioma: quanto a boca reage (attack/release) e quanto tempo "segura" aberta (hold, ms).
+// Idiomas silábicos rápidos (ja, es, it, ko) reagem mais ágil; alemão/holandês têm consoantes
+// longas, então seguramos um pouco mais para a boca não "piscar".
 const LANG = {
   pt:{attack:.55, release:.25, hold:70},  es:{attack:.65, release:.32, hold:55},
   en:{attack:.55, release:.25, hold:70},  fr:{attack:.55, release:.22, hold:80},
@@ -116,140 +128,207 @@ const LANG = {
   nl:{attack:.50, release:.20, hold:90},  ja:{attack:.70, release:.35, hold:45},
   ko:{attack:.65, release:.32, hold:50},
 };
+const BIN_MS = 10; // resolução do mapa de volume
 
 const $ = s => document.querySelector(s);
 const canvas = $('#c'), ctx = canvas.getContext('2d');
 const imgs = {};
-let audioEl = null, actx = null, analyser = null, srcNode = null, recDest = null;
-let running = false, recorder = null;
+let audioEl = null, audioBuf = null, levels = null, playing = false, exporting = false;
+
+function status(t){ $('#status').textContent = t; }
+const anim = k => document.querySelector(`[data-anim="${k}"]`).checked;
 
 // --- carregamento ---
 document.querySelectorAll('[data-img]').forEach(inp => inp.onchange = () => {
   const f = inp.files[0]; if (!f) return;
   const im = new Image();
-  im.onload = () => { imgs[inp.dataset.img] = im; drawFrame(0); status('Imagem carregada.'); };
+  im.onload = () => { imgs[inp.dataset.img] = im; preview(); status('Imagem carregada.'); };
   im.src = URL.createObjectURL(f);
 });
-$('#audioFile').onchange = e => {
+
+$('#audioFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   stop();
+  status('Analisando áudio…');
   audioEl = new Audio(URL.createObjectURL(f));
-  srcNode = null;
-  status('Áudio carregado: ' + f.name);
+  const actx = new AudioContext();
+  audioBuf = await actx.decodeAudioData(await f.arrayBuffer());
+  actx.close();
+  levels = analyze(audioBuf);
+  status(`Áudio pronto: ${f.name} (${audioBuf.duration.toFixed(1)} s)`);
 };
-$('#res').onchange = () => { const [w,h] = $('#res').value.split('x').map(Number); canvas.width=w; canvas.height=h; drawFrame(0); };
-['#bg','#scale'].forEach(s => $(s).oninput = () => drawFrame(0));
-$('#threshold').oninput = () => { $('#meterThr').style.left = ($('#threshold').value*250)+'%'; };
+
+// Volume (RMS) do áudio inteiro, calculado uma única vez — é isso que torna a exportação rápida.
+function analyze(buf){
+  const sr = buf.sampleRate, bin = Math.round(sr * BIN_MS / 1000), win = bin * 2;
+  const ch = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
+  const n = Math.ceil(buf.length / bin), out = new Float32Array(n);
+  for (let b = 0; b < n; b++) {
+    const start = Math.max(0, b*bin - bin/2|0), end = Math.min(buf.length, start + win);
+    let s = 0;
+    for (let i = start; i < end; i++) { let v = 0; for (const c of ch) v += c[i]; v /= ch.length; s += v*v; }
+    out[b] = Math.sqrt(s / Math.max(1, end - start));
+  }
+  return out;
+}
+const levelAt = t => levels ? (levels[Math.floor(t / BIN_MS)] || 0) : 0;
+
+$('#res').onchange = () => { const [w,h] = $('#res').value.split('x').map(Number); canvas.width=w; canvas.height=h; preview(); };
+['#bg','#scale','#anchor'].forEach(s => $(s).oninput = preview);
+$('#threshold').oninput = () => { $('#meterThr').style.left = Math.min(100, $('#threshold').value*250)+'%'; };
 $('#threshold').oninput();
 
-function status(t){ $('#status').textContent = t; }
-const anim = k => document.querySelector(`[data-anim="${k}"]`).checked;
+// --- animação (determinística a partir do tempo, serve para prévia e exportação) ---
+const newState = () => ({ level:0, lastLoud:-1e9, phase:0, prevT:0, talking:false, blinkUntil:0, nextBlink:2500 });
 
-function setupAudio(){
-  if (!actx) actx = new AudioContext();
-  if (!srcNode) {
-    srcNode = actx.createMediaElementSource(audioEl);
-    analyser = actx.createAnalyser(); analyser.fftSize = 1024;
-    recDest = actx.createMediaStreamDestination();
-    srcNode.connect(analyser); analyser.connect(actx.destination); srcNode.connect(recDest);
-  }
-}
-
-// --- estado da animação ---
-let level = 0, talking = false, lastLoud = 0, bouncePhase = 0, blinkUntil = 0, nextBlink = 0;
-let buf = null;
-
-function readLevel(){
-  if (!analyser) return 0;
-  if (!buf) buf = new Float32Array(analyser.fftSize);
-  analyser.getFloatTimeDomainData(buf);
-  let s = 0; for (const v of buf) s += v*v;
-  return Math.sqrt(s / buf.length); // RMS
-}
-
-function drawFrame(t){
-  const W = canvas.width, H = canvas.height, bg = $('#bg').value;
-  ctx.clearRect(0,0,W,H);
-  if (bg !== 'transparent') { ctx.fillStyle = bg; ctx.fillRect(0,0,W,H); }
+function drawFrame(t, raw, st){
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = $('#bg').value; ctx.fillRect(0,0,W,H);
   const base = imgs.idle; if (!base) return;
 
-  const p = LANG[$('#lang').value], I = +$('#intensity').value;
-  const raw = running ? readLevel() : 0;
-  level += (raw - level) * (raw > level ? p.attack : p.release);
-  const thr = +$('#threshold').value;
-  if (level > thr) lastLoud = t;
-  const wasTalking = talking;
-  talking = running && (t - lastLoud) < p.hold;
-  const shouting = talking && level > +$('#shoutThr').value;
-  if (talking && !wasTalking) bouncePhase = 0; // cada frase nova dá um "pulinho"
-  $('#meterFill').style.width = Math.min(100, level*250)+'%';
-  $('#meterFill').style.background = shouting ? '#ff5252' : talking ? '#4caf50' : '#666';
+  const p = LANG[$('#lang').value], I = +$('#intensity').value, thr = +$('#threshold').value;
+  const dt = Math.max(0, t - st.prevT); st.prevT = t;
+  const k = Math.min(1, dt / 16.7); // normaliza suavização para qualquer FPS
+  st.level += (raw - st.level) * (raw > st.level ? p.attack : p.release) * k;
+  if (st.level > thr) st.lastLoud = t;
+  const wasTalking = st.talking;
+  st.talking = (t - st.lastLoud) < p.hold;
+  const talking = st.talking, shouting = talking && st.level > +$('#shoutThr').value;
+  if (talking && !wasTalking) st.phase = 0;      // cada frase nova começa com um pulinho
+  if (talking) st.phase += dt * 0.015;
 
-  // piscar a cada 2–6 s
-  if (t > nextBlink) { blinkUntil = t + 130; nextBlink = t + 2000 + Math.random()*4000; }
-  const blinking = t < blinkUntil;
+  if (t > st.nextBlink) { st.blinkUntil = t + 130; st.nextBlink = t + 2000 + Math.random()*4000; }
+  const blinking = t < st.blinkUntil;
 
-  let im = base;
+  let im;
   if (shouting && imgs.shout) im = imgs.shout;
   else if (talking) im = (blinking && imgs.blinkTalk) || imgs.talk || base;
   else im = (blinking && imgs.blinkIdle) || base;
 
-  // transformações
-  const amt = Math.min(1, level / Math.max(thr*3, .01)) * I;
+  const amt = Math.min(1, st.level / Math.max(thr*3, .01)) * I;
   let dx=0, dy=0, rot=0, sx=1, sy=1;
-  if (talking) bouncePhase += 1;
-  if (anim('bounce') && talking) dy -= Math.abs(Math.sin(bouncePhase*0.25)) * 30 * amt;
-  if (anim('squash') && talking) { const q = Math.sin(bouncePhase*0.25)*0.04*amt; sx += -q; sy += q; }
+  if (anim('bounce') && talking) dy -= Math.abs(Math.sin(st.phase)) * 30 * amt;
+  if (anim('squash') && talking) { const q = Math.sin(st.phase)*0.04*amt; sx -= q; sy += q; }
   if (anim('sway')) dx += Math.sin(t/600) * 12 * I * (talking?1.5:0.6);
   if (anim('tilt')) rot += Math.sin(t/900) * 0.035 * I * (talking?1.4:0.6);
   if (anim('zoom') && talking) { sx += 0.05*amt; sy += 0.05*amt; }
   if (anim('shake') && shouting) { dx += (Math.random()-.5)*14*I; dy += (Math.random()-.5)*14*I; }
   if (anim('breathe') && !talking) { const b = Math.sin(t/700)*0.012*I; sy += b; sx -= b/2; }
 
-  const fit = Math.min(W / im.width, H / im.height) * +$('#scale').value;
+  const fit = Math.min(W / base.width, H / base.height) * +$('#scale').value;
   const w = im.width*fit, h = im.height*fit;
+  const baseY = $('#anchor').value === 'bottom' ? H + 4 : H - (H-h)/2; // +4 esconde a borda do corte
   ctx.save();
-  ctx.translate(W/2 + dx, H - (H-h)/2 + dy); // âncora na base (pés/ombros)
+  ctx.translate(W/2 + dx, baseY + dy);
   ctx.rotate(rot); ctx.scale(sx, sy);
   if (anim('glow') && talking) { ctx.shadowColor='#fff'; ctx.shadowBlur=40*amt; }
   ctx.drawImage(im, -w/2, -h, w, h);
   ctx.restore();
+  return { level: st.level, talking, shouting };
 }
 
-function loop(t){ drawFrame(t); if (running) requestAnimationFrame(loop); }
+function meter(r, frac){
+  const f = $('#meterFill');
+  if (frac != null) { f.style.width = (frac*100)+'%'; f.style.background = '#7c5cff'; return; }
+  f.style.width = Math.min(100, (r ? r.level : 0)*250)+'%';
+  f.style.background = r && r.shouting ? '#ff5252' : r && r.talking ? '#4caf50' : '#666';
+}
+function preview(){ if (!playing && !exporting) drawFrame(0, 0, newState()); }
 
+// --- prévia em tempo real ---
+let pst;
+function loop(){
+  if (!playing) return;
+  const t = audioEl.currentTime * 1000;
+  meter(drawFrame(t, levelAt(t), pst));
+  requestAnimationFrame(loop);
+}
 async function play(){
+  if (exporting) return;
   if (!imgs.idle) return status('Carregue pelo menos o PNG de boca fechada.');
-  if (!audioEl) return status('Carregue o áudio da narração.');
-  setupAudio(); await actx.resume();
-  audioEl.currentTime = 0; await audioEl.play();
-  running = true; requestAnimationFrame(loop);
-  audioEl.onended = () => { running = false; drawFrame(performance.now()); if (recorder) recorder.stop(); status('Fim.'); };
-  status('Tocando…');
+  if (!levels) return status('Carregue o áudio da narração.');
+  pst = newState(); audioEl.currentTime = 0; await audioEl.play();
+  playing = true; requestAnimationFrame(loop);
+  audioEl.onended = () => { playing = false; meter(null); status('Fim da prévia.'); };
+  status('Pré-visualizando…');
 }
-function stop(){ running = false; if (audioEl) audioEl.pause(); if (recorder && recorder.state!=='inactive') recorder.stop(); }
-
+function stop(){ playing = false; if (audioEl) audioEl.pause(); meter(null); }
 $('#play').onclick = play;
 $('#stop').onclick = () => { stop(); status('Parado.'); };
+
+// --- exportação rápida: renderiza quadro a quadro (sem esperar o tempo real) e codifica em MP4 ---
+async function pickVideoCodec(W, H, fps){
+  // H.264 primeiro (abre em qualquer editor); VP9 como reserva para navegadores sem H.264.
+  for (const [codec, mux] of [['avc1.640033','avc'],['avc1.4d0033','avc'],['avc1.42003e','avc'],['vp09.00.40.08','vp9']]) {
+    const cfg = { codec, width:W, height:H, framerate:fps, bitrate: W*H*fps*0.15, ...(mux==='avc' && {avc:{format:'avc'}}) };
+    if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, mux };
+  }
+  throw new Error('Este navegador não consegue codificar vídeo.');
+}
+async function pickAudioCodec(buf){
+  const base = { sampleRate: buf.sampleRate, numberOfChannels: Math.min(2, buf.numberOfChannels), bitrate: 192000 };
+  for (const [codec, mux] of [['mp4a.40.2','aac'], ['opus','opus']]) {
+    const cfg = { ...base, codec };
+    if ((await AudioEncoder.isConfigSupported(cfg)).supported) return { cfg, mux };
+  }
+  throw new Error('Este navegador não consegue codificar o áudio.');
+}
+
 $('#record').onclick = async () => {
-  if (!imgs.idle || !audioEl) return status('Carregue imagem e áudio primeiro.');
-  if (recorder) return status('Já existe uma exportação em andamento. Aguarde ou clique em Parar.');
-  setupAudio();
-  const stream = new MediaStream([...canvas.captureStream(60).getVideoTracks(), ...recDest.stream.getAudioTracks()]);
-  const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
-    .find(m => MediaRecorder.isTypeSupported(m));
-  recorder = new MediaRecorder(stream, { mimeType:mime, videoBitsPerSecond: 12e6 });
-  const chunks = [];
-  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
-  recorder.onstop = () => {
+  if (exporting) return;
+  if (!imgs.idle || !levels) return status('Carregue imagem e áudio primeiro.');
+  if (!window.VideoEncoder || !window.Mp4Muxer) return status('Use Chrome ou Edge atualizados (precisa de WebCodecs e internet na 1ª vez).');
+  stop(); exporting = true;
+  const t0 = performance.now();
+  try {
+    const W = canvas.width, H = canvas.height, fps = +$('#fps').value;
+    const { cfg: vcfg, mux: vmux } = await pickVideoCodec(W, H, fps);
+    const { cfg: acfg, mux: amux } = await pickAudioCodec(audioBuf);
+    const muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      video: { codec:vmux, width:W, height:H, frameRate:fps },
+      audio: { codec:amux, sampleRate:acfg.sampleRate, numberOfChannels:acfg.numberOfChannels },
+      fastStart: 'in-memory',
+    });
+    let err = null;
+    const venc = new VideoEncoder({ output:(c,m)=>muxer.addVideoChunk(c,m), error:e=>err=e });
+    const aenc = new AudioEncoder({ output:(c,m)=>muxer.addAudioChunk(c,m), error:e=>err=e });
+    venc.configure(vcfg); aenc.configure(acfg);
+
+    // áudio
+    const sr = audioBuf.sampleRate, nch = acfg.numberOfChannels, CH = 4096;
+    const chans = [...Array(nch)].map((_, i) => audioBuf.getChannelData(i));
+    for (let off = 0; off < audioBuf.length; off += CH) {
+      const n = Math.min(CH, audioBuf.length - off), data = new Float32Array(n * nch);
+      chans.forEach((c, i) => data.set(c.subarray(off, off + n), i * n));
+      const ad = new AudioData({ format:'f32-planar', sampleRate:sr, numberOfFrames:n, numberOfChannels:nch, timestamp:Math.round(off/sr*1e6), data });
+      aenc.encode(ad); ad.close();
+    }
+
+    // vídeo
+    const total = Math.ceil(audioBuf.duration * fps), st = newState(), dur = Math.round(1e6/fps);
+    for (let i = 0; i < total; i++) {
+      if (err) throw err;
+      const t = i * 1000 / fps;
+      drawFrame(t, levelAt(t), st);
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(i*1e6/fps), duration: dur });
+      venc.encode(frame, { keyFrame: i % (fps*2) === 0 }); frame.close();
+      if (venc.encodeQueueSize > 12) await new Promise(r => venc.addEventListener('dequeue', r, { once:true }));
+      if (i % 20 === 0) { meter(null, i/total); status(`Renderizando… ${Math.round(i/total*100)}%`); await new Promise(r => setTimeout(r)); }
+    }
+    await Promise.all([venc.flush(), aenc.flush()]);
+    if (err) throw err;
+    muxer.finalize();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(chunks, {type:mime}));
-    a.download = 'personagem-falando.' + (mime.includes('mp4')?'mp4':'webm');
-    a.click(); recorder = null; status('Vídeo exportado! ✅');
-  };
-  recorder.start();
-  await play();
-  status('Gravando… (o vídeo é gerado em tempo real, deixe a aba aberta)');
+    a.href = URL.createObjectURL(new Blob([muxer.target.buffer], { type:'video/mp4' }));
+    a.download = 'personagem-falando.mp4'; a.click();
+    const secs = (performance.now() - t0) / 1000;
+    status(`MP4 exportado em ${secs.toFixed(1)} s (${audioBuf.duration.toFixed(1)} s de vídeo) ✅`);
+  } catch (e) {
+    console.error(e); status('Erro na exportação: ' + e.message);
+  } finally {
+    exporting = false; meter(null); preview();
+  }
 };
 </script>
 </body>
