@@ -216,7 +216,10 @@ function drawFrame(t, raw, st){
   if (anim('breathe') && !talking) { const b = Math.sin(t/700)*0.012*I; sy += b; sx -= b/2; }
 
   const fit = Math.min(W / base.width, H / base.height) * +$('#scale').value;
-  const w = im.width*fit, h = im.height*fit;
+  // Cada variação (boca aberta, piscando…) pode ter resolução diferente: encaixa na caixa da base.
+  const boxW = base.width*fit, boxH = base.height*fit;
+  const k2 = Math.min(boxW / im.width, boxH / im.height);
+  const w = im.width*k2, h = im.height*k2;
   const baseY = $('#anchor').value === 'bottom' ? H + 4 : H - (H-h)/2; // +4 esconde a borda do corte
   ctx.save();
   ctx.translate(W/2 + dx, baseY + dy);
