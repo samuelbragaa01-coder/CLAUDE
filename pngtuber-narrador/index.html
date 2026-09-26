@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PNG Narrador</title>
+<style>
+  :root { --bg:#16161c; --panel:#20202a; --line:#33333f; --text:#eee; --muted:#9a9aab; --acc:#7c5cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,sans-serif; display:flex; min-height:100vh; }
+  aside { width:330px; background:var(--panel); border-right:1px solid var(--line); padding:16px; overflow-y:auto; max-height:100vh; }
+  main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px; gap:12px; }
+  h1 { font-size:18px; margin:0 0 12px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:18px 0 8px; }
+  label { display:block; margin:6px 0; }
+  .file { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px; border:1px dashed var(--line); border-radius:8px; margin-bottom:6px; }
+  .file small { color:var(--muted); display:block; }
+  .file input { width:110px; font-size:11px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; }
+  input[type=range] { width:100%; }
+  select, button { width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:#2a2a36; color:var(--text); font:inherit; }
+  button { cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); font-weight:600; }
+  .row { display:flex; gap:8px; }
+  canvas { max-width:100%; max-height:75vh; border-radius:8px; background:
+    repeating-conic-gradient(#2a2a33 0 25%, #1e1e26 0 50%) 0 0/24px 24px; }
+  #meter { width:min(640px,100%); height:10px; background:#2a2a36; border-radius:5px; overflow:hidden; position:relative; }
+  #meterFill { height:100%; width:0; background:#4caf50; }
+  #meterThr { position:absolute; top:0; bottom:0; width:2px; background:#fff; }
+  #status { color:var(--muted); }
+  @media (max-width:800px){ body{flex-direction:column} aside{width:100%;max-height:none} }
+</style>
+</head>
+<body>
+<aside>
+  <h1>🎙️ PNG Narrador</h1>
+
+  <h2>1. Imagens</h2>
+  <div class="file"><div>Boca fechada<small>obrigatório</small></div><input type="file" accept="image/*" data-img="idle"></div>
+  <div class="file"><div>Boca aberta<small>opcional</small></div><input type="file" accept="image/*" data-img="talk"></div>
+  <div class="file"><div>Piscando (fechada)<small>opcional</small></div><input type="file" accept="image/*" data-img="blinkIdle"></div>
+  <div class="file"><div>Piscando (aberta)<small>opcional</small></div><input type="file" accept="image/*" data-img="blinkTalk"></div>
+  <div class="file"><div>Grito / voz alta<small>opcional</small></div><input type="file" accept="image/*" data-img="shout"></div>
+
+  <h2>2. Narração</h2>
+  <div class="file"><div>Áudio<small>MP3, WAV, M4A…</small></div><input type="file" accept="audio/*" id="audioFile"></div>
+
+  <label>Idioma da narração
+    <select id="lang">
+      <option value="pt">Português</option>
+      <option value="es">Español</option>
+      <option value="en">English</option>
+      <option value="fr">Français</option>
+      <option value="it">Italiano</option>
+      <option value="de">Deutsch</option>
+      <option value="nl">Nederlands</option>
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+    </select>
+  </label>
+
+  <h2>3. Animações</h2>
+  <div class="grid">
+    <label><input type="checkbox" data-anim="bounce" checked> Pulo</label>
+    <label><input type="checkbox" data-anim="squash" checked> Esticar/amassar</label>
+    <label><input type="checkbox" data-anim="sway"> Balanço</label>
+    <label><input type="checkbox" data-anim="tilt"> Inclinar</label>
+    <label><input type="checkbox" data-anim="zoom"> Zoom na fala</label>
+    <label><input type="checkbox" data-anim="shake" checked> Tremer no grito</label>
+    <label><input type="checkbox" data-anim="breathe" checked> Respirar parado</label>
+    <label><input type="checkbox" data-anim="glow"> Brilho ao falar</label>
+  </div>
+  <label>Intensidade <input type="range" id="intensity" min="0.2" max="3" step="0.1" value="1"></label>
+  <label>Sensibilidade do microfone <input type="range" id="threshold" min="0.01" max="0.3" step="0.005" value="0.06"></label>
+  <label>Limite de "grito" <input type="range" id="shoutThr" min="0.1" max="0.8" step="0.01" value="0.35"></label>
+
+  <h2>4. Vídeo</h2>
+  <label>Fundo
+    <select id="bg">
+      <option value="#00ff00">Verde (chroma key)</option>
+      <option value="#0000ff">Azul (chroma key)</option>
+      <option value="#ff00ff">Magenta (chroma key)</option>
+      <option value="transparent">Transparente (WebM)</option>
+    </select>
+  </label>
+  <label>Resolução
+    <select id="res">
+      <option value="1080x1080">1080 × 1080 (quadrado)</option>
+      <option value="1920x1080">1920 × 1080 (horizontal)</option>
+      <option value="1080x1920">1080 × 1920 (vertical)</option>
+      <option value="720x720">720 × 720</option>
+    </select>
+  </label>
+  <label>Tamanho do personagem <input type="range" id="scale" min="0.3" max="1.2" step="0.01" value="0.85"></label>
+</aside>
+
+<main>
+  <canvas id="c" width="1080" height="1080"></canvas>
+  <div id="meter"><div id="meterFill"></div><div id="meterThr"></div></div>
+  <div class="row" style="width:min(640px,100%)">
+    <button id="play">▶ Pré-visualizar</button>
+    <button id="stop">■ Parar</button>
+    <button id="record" class="primary">⏺ Exportar vídeo</button>
+  </div>
+  <div id="status">Carregue um PNG e um áudio para começar.</div>
+</main>
+
+<script>
+// Perfis por idioma: quanto tempo a boca "segura" aberta e quão rápido reage.
+// Idiomas silábicos rápidos (ja, es, it, ko) pedem reação mais ágil; alemão/holandês
+// têm consoantes longas, então seguramos um pouco mais para não "piscar" a boca.
+const LANG = {
+  pt:{attack:.55, release:.25, hold:70},  es:{attack:.65, release:.32, hold:55},
+  en:{attack:.55, release:.25, hold:70},  fr:{attack:.55, release:.22, hold:80},
+  it:{attack:.65, release:.30, hold:55},  de:{attack:.50, release:.20, hold:90},
+  nl:{attack:.50, release:.20, hold:90},  ja:{attack:.70, release:.35, hold:45},
+  ko:{attack:.65, release:.32, hold:50},
+};
+
+const $ = s => document.querySelector(s);
+const canvas = $('#c'), ctx = canvas.getContext('2d');
+const imgs = {};
+let audioEl = null, actx = null, analyser = null, srcNode = null, recDest = null;
+let running = false, recorder = null;
+
+// --- carregamento ---
+document.querySelectorAll('[data-img]').forEach(inp => inp.onchange = () => {
+  const f = inp.files[0]; if (!f) return;
+  const im = new Image();
+  im.onload = () => { imgs[inp.dataset.img] = im; drawFrame(0); status('Imagem carregada.'); };
+  im.src = URL.createObjectURL(f);
+});
+$('#audioFile').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  stop();
+  audioEl = new Audio(URL.createObjectURL(f));
+  srcNode = null;
+  status('Áudio carregado: ' + f.name);
+};
+$('#res').onchange = () => { const [w,h] = $('#res').value.split('x').map(Number); canvas.width=w; canvas.height=h; drawFrame(0); };
+['#bg','#scale'].forEach(s => $(s).oninput = () => drawFrame(0));
+$('#threshold').oninput = () => { $('#meterThr').style.left = ($('#threshold').value*250)+'%'; };
+$('#threshold').oninput();
+
+function status(t){ $('#status').textContent = t; }
+const anim = k => document.querySelector(`[data-anim="${k}"]`).checked;
+
+function setupAudio(){
+  if (!actx) actx = new AudioContext();
+  if (!srcNode) {
+    srcNode = actx.createMediaElementSource(audioEl);
+    analyser = actx.createAnalyser(); analyser.fftSize = 1024;
+    recDest = actx.createMediaStreamDestination();
+    srcNode.connect(analyser); analyser.connect(actx.destination); srcNode.connect(recDest);
+  }
+}
+
+// --- estado da animação ---
+let level = 0, talking = false, lastLoud = 0, bouncePhase = 0, blinkUntil = 0, nextBlink = 0;
+let buf = null;
+
+function readLevel(){
+  if (!analyser) return 0;
+  if (!buf) buf = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(buf);
+  let s = 0; for (const v of buf) s += v*v;
+  return Math.sqrt(s / buf.length); // RMS
+}
+
+function drawFrame(t){
+  const W = canvas.width, H = canvas.height, bg = $('#bg').value;
+  ctx.clearRect(0,0,W,H);
+  if (bg !== 'transparent') { ctx.fillStyle = bg; ctx.fillRect(0,0,W,H); }
+  const base = imgs.idle; if (!base) return;
+
+  const p = LANG[$('#lang').value], I = +$('#intensity').value;
+  const raw = running ? readLevel() : 0;
+  level += (raw - level) * (raw > level ? p.attack : p.release);
+  const thr = +$('#threshold').value;
+  if (level > thr) lastLoud = t;
+  const wasTalking = talking;
+  talking = running && (t - lastLoud) < p.hold;
+  const shouting = talking && level > +$('#shoutThr').value;
+  if (talking && !wasTalking) bouncePhase = 0; // cada frase nova dá um "pulinho"
+  $('#meterFill').style.width = Math.min(100, level*250)+'%';
+  $('#meterFill').style.background = shouting ? '#ff5252' : talking ? '#4caf50' : '#666';
+
+  // piscar a cada 2–6 s
+  if (t > nextBlink) { blinkUntil = t + 130; nextBlink = t + 2000 + Math.random()*4000; }
+  const blinking = t < blinkUntil;
+
+  let im = base;
+  if (shouting && imgs.shout) im = imgs.shout;
+  else if (talking) im = (blinking && imgs.blinkTalk) || imgs.talk || base;
+  else im = (blinking && imgs.blinkIdle) || base;
+
+  // transformações
+  const amt = Math.min(1, level / Math.max(thr*3, .01)) * I;
+  let dx=0, dy=0, rot=0, sx=1, sy=1;
+  if (talking) bouncePhase += 1;
+  if (anim('bounce') && talking) dy -= Math.abs(Math.sin(bouncePhase*0.25)) * 30 * amt;
+  if (anim('squash') && talking) { const q = Math.sin(bouncePhase*0.25)*0.04*amt; sx += -q; sy += q; }
+  if (anim('sway')) dx += Math.sin(t/600) * 12 * I * (talking?1.5:0.6);
+  if (anim('tilt')) rot += Math.sin(t/900) * 0.035 * I * (talking?1.4:0.6);
+  if (anim('zoom') && talking) { sx += 0.05*amt; sy += 0.05*amt; }
+  if (anim('shake') && shouting) { dx += (Math.random()-.5)*14*I; dy += (Math.random()-.5)*14*I; }
+  if (anim('breathe') && !talking) { const b = Math.sin(t/700)*0.012*I; sy += b; sx -= b/2; }
+
+  const fit = Math.min(W / im.width, H / im.height) * +$('#scale').value;
+  const w = im.width*fit, h = im.height*fit;
+  ctx.save();
+  ctx.translate(W/2 + dx, H - (H-h)/2 + dy); // âncora na base (pés/ombros)
+  ctx.rotate(rot); ctx.scale(sx, sy);
+  if (anim('glow') && talking) { ctx.shadowColor='#fff'; ctx.shadowBlur=40*amt; }
+  ctx.drawImage(im, -w/2, -h, w, h);
+  ctx.restore();
+}
+
+function loop(t){ drawFrame(t); if (running) requestAnimationFrame(loop); }
+
+async function play(){
+  if (!imgs.idle) return status('Carregue pelo menos o PNG de boca fechada.');
+  if (!audioEl) return status('Carregue o áudio da narração.');
+  setupAudio(); await actx.resume();
+  audioEl.currentTime = 0; await audioEl.play();
+  running = true; requestAnimationFrame(loop);
+  audioEl.onended = () => { running = false; drawFrame(performance.now()); if (recorder) recorder.stop(); status('Fim.'); };
+  status('Tocando…');
+}
+function stop(){ running = false; if (audioEl) audioEl.pause(); if (recorder && recorder.state!=='inactive') recorder.stop(); }
+
+$('#play').onclick = play;
+$('#stop').onclick = () => { stop(); status('Parado.'); };
+$('#record').onclick = async () => {
+  if (!imgs.idle || !audioEl) return status('Carregue imagem e áudio primeiro.');
+  setupAudio();
+  const stream = new MediaStream([...canvas.captureStream(60).getVideoTracks(), ...recDest.stream.getAudioTracks()]);
+  const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
+    .find(m => MediaRecorder.isTypeSupported(m));
+  recorder = new MediaRecorder(stream, { mimeType:mime, videoBitsPerSecond: 12e6 });
+  const chunks = [];
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(chunks, {type:mime}));
+    a.download = 'personagem-falando.' + (mime.includes('mp4')?'mp4':'webm');
+    a.click(); recorder = null; status('Vídeo exportado! ✅');
+  };
+  recorder.start();
+  await play();
+  status('Gravando… (o vídeo é gerado em tempo real, deixe a aba aberta)');
+};
+</script>
+</body>
+</html>
