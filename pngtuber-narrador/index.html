@@ -76,8 +76,8 @@
     <label><input type="checkbox" data-anim="glow"> Brilho ao falar</label>
   </div>
   <label>Intensidade <input type="range" id="intensity" min="0.2" max="3" step="0.1" value="1"></label>
-  <label>Sensibilidade do microfone <input type="range" id="threshold" min="0.01" max="0.3" step="0.005" value="0.06"></label>
-  <label>Limite de "grito" <input type="range" id="shoutThr" min="0.1" max="0.8" step="0.01" value="0.35"></label>
+  <label>Limite para falar (mais à esquerda = mais sensível) <input type="range" id="threshold" min="0.03" max="0.8" step="0.01" value="0.2"></label>
+  <label>Limite de "grito" <input type="range" id="shoutThr" min="0.4" max="1.5" step="0.01" value="1.05"></label>
 
   <h2>4. Vídeo</h2>
   <label>Fundo
@@ -198,13 +198,16 @@ function analyze(buf){
     for (let i = start; i < end; i++) { let v = 0; for (const c of ch) v += c[i]; v /= ch.length; s += v*v; }
     out[b] = Math.sqrt(s / Math.max(1, end - start));
   }
+  // Normaliza pelo volume típico da fala (percentil 90): narração baixa ou alta anima igual.
+  const ref = Float32Array.from(out).sort()[Math.floor(n * 0.9)] || 1e-4;
+  for (let b = 0; b < n; b++) out[b] = Math.min(1.6, out[b] / Math.max(ref, 1e-4));
   return out;
 }
 const levelAt = t => levels ? (levels[Math.floor(t / BIN_MS)] || 0) : 0;
 
 $('#res').onchange = () => { const [w,h] = $('#res').value.split('x').map(Number); canvas.width=w; canvas.height=h; preview(); };
 ['#bg','#scale','#anchor'].forEach(s => $(s).oninput = preview);
-$('#threshold').oninput = () => { $('#meterThr').style.left = Math.min(100, $('#threshold').value*250)+'%'; };
+$('#threshold').oninput = () => { $('#meterThr').style.left = Math.min(100, $('#threshold').value/1.6*100)+'%'; };
 $('#threshold').oninput();
 
 // --- animação (determinística a partir do tempo, serve para prévia e exportação) ---
@@ -224,7 +227,7 @@ function drawFrame(t, raw, st){
   st.talking = (t - st.lastLoud) < p.hold;
   const talking = st.talking, shouting = talking && st.level > +$('#shoutThr').value;
   if (talking && !wasTalking) st.phase = 0;      // cada frase nova começa com um pulinho
-  if (talking) st.phase += dt * 0.015;
+  if (talking) st.phase += dt * 0.012;
 
   if (t > st.nextBlink) { st.blinkUntil = t + 130; st.nextBlink = t + 2000 + Math.random()*4000; }
   const blinking = t < st.blinkUntil;
@@ -234,14 +237,14 @@ function drawFrame(t, raw, st){
   else if (talking) im = (blinking && imgs.blinkTalk) || imgs.talk || base;
   else im = (blinking && imgs.blinkIdle) || base;
 
-  const amt = Math.min(1, st.level / Math.max(thr*3, .01)) * I;
+  const amt = Math.min(1.2, st.level) * I, U = H / 1080; // U: escala as animações pela resolução
   let dx=0, dy=0, rot=0, sx=1, sy=1;
-  if (anim('bounce') && talking) dy -= Math.abs(Math.sin(st.phase)) * 30 * amt;
-  if (anim('squash') && talking) { const q = Math.sin(st.phase)*0.04*amt; sx -= q; sy += q; }
-  if (anim('sway')) dx += Math.sin(t/600) * 12 * I * (talking?1.5:0.6);
+  if (anim('bounce') && talking) dy -= Math.abs(Math.sin(st.phase)) * 70 * U * amt;
+  if (anim('squash') && talking) { const q = Math.sin(st.phase)*0.07*amt; sx -= q; sy += q; }
+  if (anim('sway')) dx += Math.sin(t/600) * 25 * U * I * (talking?1.5:0.6);
   if (anim('tilt')) rot += Math.sin(t/900) * 0.035 * I * (talking?1.4:0.6);
-  if (anim('zoom') && talking) { sx += 0.05*amt; sy += 0.05*amt; }
-  if (anim('shake') && shouting) { dx += (Math.random()-.5)*14*I; dy += (Math.random()-.5)*14*I; }
+  if (anim('zoom') && talking) { sx += 0.08*amt; sy += 0.08*amt; }
+  if (anim('shake') && shouting) { dx += (Math.random()-.5)*20*U*I; dy += (Math.random()-.5)*20*U*I; }
   if (anim('breathe') && !talking) { const b = Math.sin(t/700)*0.012*I; sy += b; sx -= b/2; }
 
   const fit = Math.min(W / base.width, H / base.height) * +$('#scale').value;
@@ -262,7 +265,7 @@ function drawFrame(t, raw, st){
 function meter(r, frac){
   const f = $('#meterFill');
   if (frac != null) { f.style.width = (frac*100)+'%'; f.style.background = '#7c5cff'; return; }
-  f.style.width = Math.min(100, (r ? r.level : 0)*250)+'%';
+  f.style.width = Math.min(100, (r ? r.level : 0)/1.6*100)+'%';
   f.style.background = r && r.shouting ? '#ff5252' : r && r.talking ? '#4caf50' : '#666';
 }
 function preview(){ if (!playing && !exporting) drawFrame(0, 0, newState()); }
